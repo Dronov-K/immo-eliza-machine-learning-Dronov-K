@@ -27,7 +27,6 @@ Price Prediction/
 ├── data/
 |   └── Kangaroo.csv
 ├── models
-|   ├── rf_model.pkl
 |   └── xgb_model.pkl
 ├── src/
 │   ├── __init__.py
