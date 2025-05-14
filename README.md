@@ -1,41 +1,53 @@
-# 🏠 ImmoEliza Price Prediction
+# 🏠Price Prediction
 
 ![Python](https://img.shields.io/badge/Python-3.11-blue) ![License](https://img.shields.io/badge/License-MIT-green)
 
 ## 📝 Description
-The **ImmoEliza Price Prediction** project is designed to help the real estate company _ImmoEliza_ predict property prices across Belgium using machine learning techniques. The project focuses on building and training a machine learning model that can accurately predict property prices based on various features from the dataset.
+The **Price Prediction** project is designed to help predict property prices across Belgium using machine learning. The project focuses on building and training a machine learning model that can accurately predict property prices based on various features from the dataset.
 
-The dataset, referred to as the _Kangaroo_ dataset, contains a variety of information about properties, including location, type, and size. The project is structured into the following main steps:
+The project is structured into the following main steps:
 
-1. **Data Cleaning**: The dataset is pre-processed by removing duplicates, handling missing values, and ensuring there are no errors or blank spaces.
-    
-2. **Feature Engineering**: Key features from the dataset are transformed and prepared for the model, including encoding categorical variables and scaling numerical ones.
-    
-3. **Model Training**: A machine learning model (e.g., Random Forest or XGBoost) is trained using the cleaned and processed data to predict property prices.
-    
-4. **Model Evaluation**: The performance of the trained model is evaluated to determine its accuracy and generalization ability.
+1. **Data Cleaning & Preprocessing**:
+Raw data is cleaned using the DataCleaner class, which removes duplicates, fills in or drops missing values, and standardizes columns based on predefined parameters. Categorical and numerical features are then processed using a unified ColumnTransformer pipeline that handles imputation, scaling, and encoding.
 
+2. **Model Training & Tuning**:
+A machine learning pipeline is built and trained using the cleaned data. Hyperparameter tuning is performed using GridSearchCV to select the best model configuration. Supported models include Random Forest, XGBoost, and others.
 
+3. **Model Evaluation**:
+The trained model is evaluated on a test set using metrics such as Mean Absolute Error (MAE) and R² score to assess prediction accuracy.
+
+4. **Web Application (Streamlit)**:
+The final trained model is integrated into a Streamlit web application. Users can input property features and instantly receive price predictions via an intuitive user interface.
 
 ## 🌳 Project Structure
 
 ```
-hangman/
+Price Prediction/
 │
-├── datasets/
+├── data/
 |   └── Kangaroo.csv
+├── models
+|   ├── rf_model.pkl
+|   └── xgb_model.pkl
 ├── src/
 │   ├── __init__.py
+|   ├── app_styles.py
 |   ├── cleaner.py
-|   ├── encoder.py
+|   ├── cleaning_config.py
+|   ├── data_io.py
+|   ├── input_form.py
 |   └── model.py
 ├── __init__.py
+├── .gitignore
+├── app.py
 ├── main.py
 ├── README.md  
 └── requirements.txt   
 ```
 
 ## 🚀 Installation and Execution
+
+🔧 Local Setup
 
 1. **Clone the repository:**
 ```bash
@@ -54,19 +66,15 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-4. Run:
-
-```sh
-python main.py
+4. Run the Streamlit app locally:
+```bash
+streamlit run main.py
 ```
 
+☁️ Cloud Deployment
+The application is also deployed using Streamlit Community Cloud, allowing you to use the app directly in your browser without installing anything locally.
 
-
-## ✅ TODO
-
--  **Enhance Data Cleaning Process**: Improve the handling of missing values, and outliers. Implement more advanced techniques such as interpolation, imputation for missing data. Ensure data consistency across all features and columns.
-- **Feature Engineering:** Add additional transformations to prepare features for the model, such as scaling or handling outliers.
-
+🔗 Live App Link: Coming soon / Insert link here
 
 ## ⚖️ License
 

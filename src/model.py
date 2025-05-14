@@ -1,75 +1,86 @@
+import pandas as pd
+import numpy as np
+import sklearn.compose
+from src.cleaner import DataCleaner
+from src.cleaning_config import CleaningConfig
 from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.preprocessing import StandardScaler, OrdinalEncoder
+from sklearn.impute import SimpleImputer
+from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
-from xgboost import XGBRegressor
-from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_absolute_error, r2_score
+import joblib
+from pathlib import Path
 
 
 class ModelTrainer:
     """
-    Class for building, training and tuning an ML model using a pipeline and GridSearchCV.
-    The K-Nearest Neighbors (KNN) classifier is used.
+    Class for building, training and tuning ML model using a pipeline and GridSearchCV.
     """
-
-    def __init__(self, df, target_column: str):
+    def __init__(self, df: pd.DataFrame, target_column: str, cleaner_config: CleaningConfig):
         """
         Initializing a class.
 
-        :param df: Processed DataFrame without gaps and with encoded features.
+        :param df: pd.DataFrame.
         :param target_column: Name of the target feature (what we are predicting).
         """
         self.df = df
         self.target_column = target_column
-        self.model = None  # Best classifier found after GridSearchCV
-        self.pipeline = None
+        self.cleaner_config = cleaner_config
         self.X_train = self.X_test = self.y_train = self.y_test = None
+        self.pipeline = None
 
-    def apply_sample(self, sample_size: int, random_state: int = 42) -> None:
+    def _prepare_data(self) -> None:
         """
-        Apply a sample to the working DataFrame for faster experimentation.
-        The original df remains untouched.
+        Prepares the data for training and testing.
+        This method uses the DataCleaner to clean the dataset with the provided parameters.
+        It then splits the cleaned data into features (X) and target (y), and performs a
+        train-test split with 80% for training and 20% for testing.
 
-        :param sample_size: Number of rows to include in the sample.
-        :param random_state: Random state for reproducibility.
-        :raises ValueError: if sample_size is greater than or equal to the dataset size.
-        """
-        if sample_size >= len(self.df):
-            raise ValueError(f"Sample size ({sample_size}) must be less than dataset size ({len(self.df)}).")
-
-        self.df = self.df.sample(n=sample_size, random_state=random_state)
-
-    def split_data(self, test_size=0.25, random_state=42) -> None:
-        """
-        Splitting data into training and testing samples.
-
-        :param test_size: Proportion of test sample (default is 0.25).
-        :param random_state: Для воспроизводимости результата (default is 42).
         :return: None
         """
+        cleaner = DataCleaner(self.df)
+        self.df = cleaner.clean_all(self.cleaner_config)
+
         X = self.df.drop(columns=[self.target_column])
         y = self.df[self.target_column]
+
         self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(
-            X, y, test_size=test_size, random_state=random_state
+            X, y, test_size=0.2, random_state=42
         )
 
-    def build_pipeline(self, model) -> None:
+    def _build_preprocessor(self) -> sklearn.compose.ColumnTransformer:
         """
-        Building a sklearn pipeline with scaling and classification.
+        Builds a preprocessing pipeline for numerical and categorical features.
+        Numerical features are imputed using the mean strategy and scaled using StandardScaler.
+        Categorical features are imputed with the most frequent value and encoded using OrdinalEncoder.
+        The method returns a ColumnTransformer that applies the appropriate transformations
+        to each column type based on the training data.
 
-        :param model: Regression model to use in the pipeline.
-        :raises ValueError: If model is None.
-        :return: None
+        :return: A ColumnTransformer object for preprocessing the dataset.
         """
-        if model is None:
-            raise ValueError("You must provide a model to build the pipeline.")
+        numeric_cols = self.X_train.select_dtypes(include=['number']).columns.tolist()
+        categorical_cols = self.X_train.select_dtypes(include=['object', 'bool', 'category']).columns.tolist()
 
-        self.pipeline = Pipeline([
-            ('scaler', StandardScaler()),
-            ('model', model)
+        numeric_transformer = Pipeline([
+            ('imputer', SimpleImputer(strategy='mean')),
+            ('scaler', StandardScaler())
         ])
 
-    def find_best_hyperparameters(self, model=None, param_grid=None, cv: int = 5,
-                                  scoring: str = "neg_mean_absolute_error") -> None:
+        categorical_transformer = Pipeline([
+            ('imputer', SimpleImputer(strategy='most_frequent')),
+            ('encoder', OrdinalEncoder(handle_unknown='use_encoded_value', unknown_value=-1))
+        ])
+
+        preprocessor = ColumnTransformer([
+            ('num', numeric_transformer, numeric_cols),
+            ('cat', categorical_transformer, categorical_cols)
+        ])
+
+        return preprocessor
+
+    def find_best_hyperparameters(self, model, param_grid: dict, cv: int = 5,
+                                  scoring: str = 'neg_mean_absolute_error') -> None:
         """
         Finding the best hyperparameters using GridSearchCV.
 
@@ -81,63 +92,130 @@ class ModelTrainer:
         :return: None
         """
         if cv < 2:
-            raise ValueError("cv must be at least 2 or higher")
+            raise ValueError('cv must be at least 2 or higher')
 
-        if self.pipeline is None:
-            if model is None:
-                raise ValueError("Need to choose model")
-            self.build_pipeline(model)
+        self._prepare_data()
+        preprocessor = self._build_preprocessor()
 
-        if param_grid is None:
-            param_grid = {}
+        self.pipeline = Pipeline([
+            ('preprocessor', preprocessor),
+            ('model', model)
+        ])
 
-        grid_search = GridSearchCV(
-            estimator=self.pipeline,
-            param_grid=param_grid,
-            cv=cv,  # Cross-validation
+        search = GridSearchCV(
+            self.pipeline,
+            param_grid,
+            cv=cv,
             scoring=scoring,
-            n_jobs=-1,  # Parallelization (all available cores)
-            verbose=3
+            n_jobs=-1,
+            verbose=2
         )
+        search.fit(self.X_train, self.y_train)
 
-        grid_search.fit(self.X_train, self.y_train)
-        self.model = grid_search.best_estimator_  # The best model is saved
+        print('Best parameters:', search.best_params_)
+        self.pipeline = search.best_estimator_
 
     def train(self) -> None:
         """
         Train the model based on the best hyperparameters (if GridSearch was called).
 
-        :raises ValueError: If no model has been selected via find_best_hyperparameters().
+        :raises ValueError: If no pipeline has been created via find_best_hyperparameters().
         """
-        if self.model is None:
-            raise ValueError("No model to train. Use find_best_hyperparameters() first.")
-        self.model.fit(self.X_train, self.y_train)
+        if self.pipeline is None:
+            raise ValueError('No model to train. Use find_best_hyperparameters() first.')
 
-    def predict(self):
-        """
-        Generate predictions on the test set using the trained model or pipeline.
+        self.pipeline.fit(self.X_train, self.y_train)
 
-        If a model (e.g., result of GridSearchCV) is available, it is used for prediction.
-        Otherwise, the raw pipeline is used, assuming it was previously trained.
-
-        :return: NumPy array of predicted values for X_test.
-        :raises ValueError: If neither a trained model nor pipeline is available.
-        """
-        if self.model:
-            return self.model.predict(self.X_test)
-        elif self.pipeline:
-            return self.pipeline.predict(self.X_test)
-        raise ValueError("Model is not trained yet")
-
-    def evaluate(self) -> float:
+    def evaluate(self) -> None:
         """
         Evaluate the trained model on the test set using MAE.
 
-        :return: mean absolute error
+        :return: None
         """
-        y_pred = self.predict()
+        y_pred = self.pipeline.predict(self.X_test)
         mae = mean_absolute_error(self.y_test, y_pred)
         r2 = r2_score(self.y_test, y_pred)
-        print(f"Mean Absolute Error: {mae:.2f}")
-        print(f"R² Score: {r2:.2f}")
-        return mae
+        print(f'MAE: {mae:.2f}')
+        print(f'R2: {r2:.2f}')
+
+    def save_pipeline(self, filepath: str) -> None:
+        """
+        Saves the trained pipeline to a file.
+        If the pipeline has not been trained, raises a ValueError.
+        Creates the directory if it does not exist and saves the pipeline using joblib.
+
+        :param filepath: The path where the pipeline should be saved.
+        :return: None
+        """
+        if self.pipeline is None:
+            raise ValueError('Pipeline has not been trained.')
+        Path(filepath).parent.mkdir(parents=True, exist_ok=True)
+        joblib.dump(self.pipeline, filepath)
+        print(f"Pipeline save: {filepath}")
+
+    def load_pipeline(self, filepath: str) -> None:
+        """
+        Loads a pipeline from a file.
+        Uses joblib to load a previously saved pipeline and assigns it to the instance.
+
+        :param filepath: The path to the saved pipeline file.
+        :return: None
+        """
+        self.pipeline = joblib.load(filepath)
+        print(f"Pipeline download: {filepath}")
+
+    def analyze_feature_importance(self, top_n: int = 20) -> pd.DataFrame:
+        """
+        Analyzes feature importance after training the model.
+        Supported models are `feature_importances_` (trees)
+        and `coef_` (linear models).
+
+        :param top_n: Number of top features to display (default 20).
+        :return: DataFrame with signs and their importance
+        """
+        if self.pipeline is None:
+            raise ValueError('Train the model first (pipeline).')
+
+        model = self.pipeline.named_steps['model']
+        preprocessor = self.pipeline.named_steps['preprocessor']
+
+        # Get the names of the features
+        def get_feature_names(preprocessor, input_features):
+            output_features = []
+
+            for name, transformer, cols in preprocessor.transformers_:
+                if name == 'remainder':
+                    continue
+                if hasattr(transformer, 'get_feature_names_out'):
+                    try:
+                        feat_names = transformer.get_feature_names_out(cols)
+                    except:
+                        feat_names = cols
+                else:
+                    feat_names = cols
+                output_features.extend(feat_names)
+
+            return output_features
+
+        feature_names = get_feature_names(preprocessor, self.X_train.columns)
+
+        # Get importance
+        if hasattr(model, 'feature_importances_'):
+            importances = model.feature_importances_
+        elif hasattr(model, 'coef_'):
+            importances = np.abs(model.coef_)
+        else:
+            raise ValueError('The model does not support feature importance extraction')
+
+        if len(feature_names) != len(importances):
+            raise ValueError('The size of features and importances do not match')
+
+        importance_df = pd.DataFrame({
+            'feature': feature_names,
+            'importance': importances
+        }).sort_values(by='importance', ascending=False)
+
+        print(f"\nTop-{top_n} sings by importance:")
+        print(importance_df.head(top_n))
+
+        return importance_df

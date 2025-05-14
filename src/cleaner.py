@@ -1,4 +1,7 @@
 import pandas as pd
+import numpy as np
+import unicodedata
+from src.cleaning_config import CleaningConfig
 
 
 class DataCleaner:
@@ -6,42 +9,15 @@ class DataCleaner:
     A class for loading, cleaning, and saving tabular data from CSV files.
     """
 
-    def __init__(self, filepath: str, sep=',', encoding='utf-8'):
+    def __init__(self, df: pd.DataFrame):
         """
-        Initializes the DataCleaner instance by loading data from the specified CSV file.
+        Initializes the object with a DataFrame.
 
-        :param filepath: The path to the CSV file.
-        :param sep: The delimiter used in the file (default is ',').
-        :param encoding: The encoding of the file (default is 'utf-8').
+        :param df: The DataFrame to be stored in the object.
         """
-        self.original_df = self.create_dataframe(filepath, sep=sep, encoding=encoding)
-        self.df = self.original_df.copy()
+        self.df = df
 
-    @staticmethod
-    def create_dataframe(filepath: str, sep: str, encoding: str) -> pd.DataFrame:
-        """
-        Loads a CSV file into a DataFrame with error handling.
-
-        :param filepath: The path to the file.
-        :param sep: The delimiter used in the file.
-        :param encoding: The encoding of the file.
-        :return: pd.DataFrame: pandas DataFrame with loaded data from csv file.
-        """
-        try:
-            df = pd.read_csv(filepath, sep=sep, encoding=encoding, index_col=0)
-            print(f"File {filepath} uploaded successfully")
-        except FileNotFoundError:
-            raise FileNotFoundError(f"File not found at path: {filepath}")
-        except pd.errors.ParserError:
-            raise pd.errors.ParserError(f"Unable to parse CSV file: {filepath}")
-        except UnicodeError:
-            raise UnicodeError(f"Encoding error reading file: {filepath}")
-        except Exception as e:
-            raise Exception(f"Unknown error loading file {filepath}: {str(e)}")
-
-        return df
-
-    def remove_duplicates(self, subset=None, keep='first') -> None:
+    def remove_duplicates(self, subset: str = None, keep='first') -> None:
         """
         Removes duplicate rows from the DataFrame.
 
@@ -51,45 +27,95 @@ class DataCleaner:
         """
         self.df = self.df.drop_duplicates(subset=subset, keep=keep)
 
-    def remove_columns_by_missing_percentage(self, percent: int = 60, exceptions: list[str] = None,
-                                             to_drop: list[str] = None) -> pd.Index:
+    def remove_columns_by_missing_percentage(self, percent: int = 60, exceptions: list[str] = None, ) -> None:
         """
         Removes columns with missing values exceeding the specified percentage.
-        Optionally excludes certain columns from being dropped.
 
         :param percent: The percentage threshold of missing values. Columns with missing values greater than or equal to this percentage will be dropped (default is 60%).
         :param exceptions: A list of column names that should not be dropped, even if they have a high percentage of missing values.
-        :param to_drop: column you want to drop at any case (default is None).
-        :return: pd.Index: The percentage of missing values for each column.
+        :return: None
         """
-        if to_drop is None:
-            to_drop = []
-        self.df = self.df.drop(columns=to_drop)
         if exceptions is None:
             exceptions = []
-        missing_percentage = ((self.df.isnull().sum() / len(self.df)) * 100)
+        missing_percentage = self.get_missing_percentage()
         columns_to_drop = [
             col for col, perc in missing_percentage.items()
             if perc >= percent and col not in exceptions
         ]
         self.df = self.df.drop(columns=columns_to_drop)
 
-        return missing_percentage
-
-    def remove_spaces(self) -> None:
+    def drop_columns(self, columns: list[str] = None) -> None:
         """
-        Removes leading and trailing spaces and converts string columns to lowercase except for URLs.
+        Drop specified columns from the DataFrame.
 
+        :param columns: A list of columns to drop (default is None).
         :return: None
         """
+        if columns:
+            self.df = self.df.drop(columns=columns)
+
+    def drop_rows_with_missing_value(self, required_columns: list[str] = None) -> None:
+        """
+        Drop rows where any of the required columns have missing values.
+
+        :param required_columns: A list of columns where to check missing values.
+        :return:
+        """
+        if required_columns:
+            self.df = self.df.dropna(subset=required_columns)
+
+    def get_missing_percentage(self) -> pd.Series:
+        """
+        Return the percentage of missing values per column.
+        :return: pd.Index: The percentage of missing values for each column.
+        """
+        missing_percentage = (self.df.isnull().sum() / len(self.df)) * 100
+
+        return missing_percentage
+
+    def normalize_text_columns(self, title_case_columns: list[str] = None) -> None:
+        """
+        Cleans string columns by:
+        - Removing leading/trailing spaces
+        - Converting to lowercase
+        - Replacing underscores with spaces
+        - Removing accents (e.g., 'Liège' → 'Liege')
+        - Applying .capitalize() to all
+        - Applying .title() to selected columns
+
+        :param title_case_columns: list of column names to apply .title() formatting
+        """
+        title_case_columns = title_case_columns or []
+
         for col in self.df.columns:
             if self.df[col].dtype == 'object':
                 self.df[col] = self.df[col].apply(
-                    lambda x: x.strip().lower().capitalize()
+                    lambda x: self._clean_string(x, use_title_case=(col in title_case_columns))
                     if isinstance(x, str) and not x.startswith('http') else x
                 )
 
-    def remove_by_column_values(self, column: str, value: list[str]) -> None:
+    @staticmethod
+    def _clean_string(text: str, use_title_case: bool = False) -> str:
+        """
+        Cleans and normalizes a string by applying the following transformations:
+        - Strips leading and trailing whitespace
+        - Converts to lowercase
+        - Replaces underscores with spaces
+        - Removes accented characters (e.g., 'Liège' → 'Liege')
+        - Capitalizes the string or applies title case if specified
+
+        :param text: The input string to clean.
+        :param use_title_case: If True, capitalizes the first letter of each word (title case).
+                           If False, only the first letter of the string is capitalized.
+        :return: The cleaned and normalized string.
+        """
+        text = text.strip().lower().replace('_', ' ')
+        # removing accents, e.g. 'Liège' → 'Liege'
+        text = unicodedata.normalize('NFKD', text).encode('ASCII', 'ignore').decode('utf-8')
+
+        return text.title() if use_title_case else text.capitalize()
+
+    def remove_by_column_values(self, column: str = None, value: list[str] = None) -> None:
         """
         Removes rows where the specified column has values in the given list.
 
@@ -97,21 +123,44 @@ class DataCleaner:
         :param value: List of values to remove.
         :return: None
         """
+        if column is None or value is None:
+            return
+
         value_str = ', '.join(f"'{elem}'" for elem in value)
         self.df = self.df.query(f"{column} not in [{value_str}]")
 
-    def replace_rare_values(self, column: str, replacement=pd.NA, min_amount: int = 20) -> None:
+    def replace_rare_values(self, columns: list[str] = None, min_amount: int = 20, strategy: str = 'drop') -> None:
         """
         Replaces rare categories in the specified column with replacement parameter.
 
-        :param replacement: Replace actual value for this (default is Nan).
-        :param column: Column to process.
+        :param columns: Columns to process.
         :param min_amount: Minimum count to keep category (default is 20).
+        :param strategy: 'replace' to replace with NA, 'drop' to drop rows.
         :return: None
         """
-        value_counts = self.df[column].value_counts()
-        rare_values = value_counts[value_counts < min_amount].index
-        self.df[column] = self.df[column].apply(lambda x: replacement if x in rare_values else x)
+        if columns is None:
+            return
+        for column in columns:
+            value_counts = self.df[column].value_counts()
+            rare_values = value_counts[value_counts < min_amount].index
+
+            if strategy == 'replace':
+                if pd.api.types.is_numeric_dtype(self.df[column]):
+                    # Use np.nan for numeric columns
+                    self.df[column] = self.df[column].apply(
+                        lambda x: np.nan if x in rare_values else x
+                    )
+                elif pd.api.types.is_object_dtype(self.df[column]) or pd.api.types.is_categorical_dtype(
+                        self.df[column]):
+                    # Use pd.NA for categorical/text columns
+                    self.df[column] = self.df[column].apply(
+                        lambda x: pd.NA if x in rare_values else x)
+            elif strategy == 'drop':
+                initial_shape = self.df.shape
+                self.df = self.df[~self.df[column].isin(rare_values)]
+                print(f"Dropped {initial_shape[0] - self.df.shape[0]} rows due to rare values in '{column}'")
+            else:
+                raise ValueError("Strategy must be 'replace' or 'drop'")
 
     def handle_errors(self) -> None:
         """
@@ -124,41 +173,39 @@ class DataCleaner:
         for col in numeric_cols:
             self.df[col] = pd.to_numeric(self.df[col], errors='coerce')
 
-    def handle_missing_values(self) -> None:
+    def clean_all(self, config: CleaningConfig) -> pd.DataFrame:
         """
-        Handles missing values in the DataFrame by filling them with appropriate defaults.
+        Perform all cleaning steps on the dataframe using a configuration object.
 
-        :return: None
+        :param config: CleanConfig object containing all cleaning parameters.
+        :return: Cleaned pandas DataFrame.
         """
+        self.remove_duplicates(
+            subset=config.drop_duplicates_subset,
+            keep=config.drop_duplicates_strategy
+        )
+        self.remove_columns_by_missing_percentage(
+            percent=config.missing_percent,
+            exceptions=config.exceptions
+        )
+        self.drop_columns(
+            columns=config.to_drop
+        )
+        self.drop_rows_with_missing_value(
+            required_columns=config.required_columns
+        )
+        self.normalize_text_columns(
+            title_case_columns=config.title_case_columns
+        )
+        self.remove_by_column_values(
+            column=config.column_for_special_remove,
+            value=config.values_for_special_remove
+        )
+        self.replace_rare_values(
+            columns=config.rare_values_columns,
+            min_amount=config.rare_values_min_amount,
+            strategy=config.rare_values_strategy
+        )
+        self.handle_errors()
 
-        for col in self.df.columns:
-            if self.df[col].dtype == 'object':
-                if set(self.df[col].dropna().unique()) == {True}:
-                    self.df[col] = self.df[col].apply(lambda x: 1 if x is True else 0).fillna(-1).astype(int)
-
-                else:
-                    self.df[col] = self.df[col].fillna('Unknown')
-
-            elif self.df[col].dtype in ['float64']:
-                self.df[col] = self.df[col].apply(lambda x: int(x) if not pd.isna(x) else x)
-                self.df[col] = self.df[col].fillna(self.df[col].median())
-
-    def write_to_csv(self, output_file: str, mode='w', sep=',', encoding='utf-8') -> None:
-        """
-        Saves the cleaned DataFrame to a CSV file.
-
-        :param output_file: The path to the output file.
-        :param mode: The write mode ('w' for overwriting, 'a' for appending) default is 'w'.
-        :param sep: The delimiter to use between columns (default is ',').
-        :param encoding: The encoding format to use for the output file (default is 'utf-8').
-        :return: None
-        """
-        try:
-            self.df.to_csv(output_file, mode=mode, sep=sep, encoding=encoding, index=False)
-            print(f"File {output_file} created successfully")
-        except FileNotFoundError:
-            raise FileNotFoundError(f"Write path doesn't exist: {output_file}")
-        except PermissionError:
-            raise PermissionError(f"No permission to write to file: {output_file}")
-        except Exception as e:
-            raise Exception(f"Unknown error writing file {output_file}: {str(e)}")
+        return self.df
