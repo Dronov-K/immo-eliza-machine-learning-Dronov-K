@@ -4,7 +4,7 @@ import sklearn.compose
 from src.cleaner import DataCleaner
 from src.cleaning_config import CleaningConfig
 from sklearn.model_selection import train_test_split, GridSearchCV
-from sklearn.preprocessing import StandardScaler, OrdinalEncoder
+from sklearn.preprocessing import StandardScaler, OrdinalEncoder, FunctionTransformer
 from sklearn.impute import SimpleImputer
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
@@ -17,6 +17,7 @@ class ModelTrainer:
     """
     Class for building, training and tuning ML model using a pipeline and GridSearchCV.
     """
+
     def __init__(self, df: pd.DataFrame, target_column: str, cleaner_config: CleaningConfig):
         """
         Initializing a class.
@@ -51,16 +52,22 @@ class ModelTrainer:
 
     def _build_preprocessor(self) -> sklearn.compose.ColumnTransformer:
         """
-        Builds a preprocessing pipeline for numerical and categorical features.
+        Builds a preprocessing pipeline for numerical, categorical and boolean features.
         Numerical features are imputed using the mean strategy and scaled using StandardScaler.
         Categorical features are imputed with the most frequent value and encoded using OrdinalEncoder.
+        Boolean features сleaned and converted to integer representation (0 or 1) by the `_clean_boolean` method.
         The method returns a ColumnTransformer that applies the appropriate transformations
         to each column type based on the training data.
 
         :return: A ColumnTransformer object for preprocessing the dataset.
         """
         numeric_cols = self.X_train.select_dtypes(include=['number']).columns.tolist()
-        categorical_cols = self.X_train.select_dtypes(include=['object', 'bool', 'category']).columns.tolist()
+        object_cols = self.X_train.select_dtypes(include=['object', 'bool', 'category']).columns.tolist()
+        boolean_cols = [
+            col for col in object_cols
+            if self.X_train[col].dropna().isin([True]).all()
+        ]
+        categorical_cols = list(set(object_cols) - set(boolean_cols))
 
         numeric_transformer = Pipeline([
             ('imputer', SimpleImputer(strategy='mean')),
@@ -72,12 +79,35 @@ class ModelTrainer:
             ('encoder', OrdinalEncoder(handle_unknown='use_encoded_value', unknown_value=-1))
         ])
 
+        boolean_transformer = Pipeline([
+            ('bool_cleaner', FunctionTransformer(self._clean_boolean))
+        ])
+
         preprocessor = ColumnTransformer([
             ('num', numeric_transformer, numeric_cols),
-            ('cat', categorical_transformer, categorical_cols)
+            ('cat', categorical_transformer, categorical_cols),
+            ('bool', boolean_transformer, boolean_cols)
         ])
 
         return preprocessor
+
+    @staticmethod
+    def _clean_boolean(x: pd.DataFrame) -> pd.DataFrame:
+        """
+        Cleans boolean columns by:
+        - Converting columns to pandas 'boolean' dtype to handle missing values.
+        - Filling missing values with False.
+        - Converting boolean values to integer type (False -> 0, True -> 1).
+
+        This ensures all boolean features are consistently encoded as 0 or 1,
+        and no missing values remain.
+
+        :param x: DataFrame with boolean columns to clean.
+        :return: DataFrame with cleaned boolean columns encoded as integers.
+        """
+        for col in x.columns:
+            x[col] = x[col].astype('boolean').fillna(False).astype(bool).astype(int)
+        return x
 
     def find_best_hyperparameters(self, model, param_grid: dict, cv: int = 5,
                                   scoring: str = 'neg_mean_absolute_error') -> None:
