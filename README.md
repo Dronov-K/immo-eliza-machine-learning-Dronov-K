@@ -25,7 +25,8 @@ The final trained model is integrated into a Streamlit web application. Users ca
 Price Prediction/
 │
 ├── data/
-|   └── Kangaroo.csv
+|   ├── Kangaroo.csv
+|   └── updated_Kangaroo.csv
 ├── models
 |   └── xgb_model.pkl
 ├── src/
@@ -35,6 +36,7 @@ Price Prediction/
 |   ├── cleaning_config.py
 |   ├── data_io.py
 |   ├── input_form.py
+|   ├── location_utils.py
 |   └── model.py
 ├── __init__.py
 ├── .gitignore
