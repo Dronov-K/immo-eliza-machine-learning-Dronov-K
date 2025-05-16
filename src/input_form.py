@@ -103,14 +103,21 @@ class PropertyInput:
                                                       options=subtype_options,
                                                       index=None,
                                                       placeholder='--Select--'
-                                                      )
+                                                   )
             # Determine postcodes available based on selected province or locality
-            if selected_province:
+            if selected_province and selected_locality:
+                # Get postcodes for exact province + locality
+                postcodes = sorted(
+                    self.location_map.get(selected_province, {}).get(selected_locality, [])
+                )
+
+            elif selected_province:
                 # All postcodes in the selected province
                 all_codes = set()
                 for codes in self.location_map[selected_province].values():
                     all_codes.update(codes)
                 postcodes = sorted(all_codes)
+
             elif selected_locality:
                 # If province not selected, find postcodes for selected locality across provinces
                 for province_data in self.location_map.values():
